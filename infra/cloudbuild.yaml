@@ -1,0 +1,66 @@
+steps:
+  # 1. Build Backend Image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/backend:$COMMIT_SHA', '-f', 'infra/Dockerfile.backend', '.']
+  
+  # 2. Push Backend Image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/backend:$COMMIT_SHA']
+
+  # 3. Deploy Backend to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'servadium-backend'
+      - '--image'
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/backend:$COMMIT_SHA'
+      - '--region'
+      - '${_REGION}'
+      - '--allow-unauthenticated'
+      - '--set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest'
+      - '--set-env-vars=GCP_PROJECT_ID=$PROJECT_ID,GCS_BUCKET_NAME=${_BUCKET_NAME},VERTEX_AI_INDEX_ID=${_INDEX_ID},VERTEX_AI_ENDPOINT_ID=${_ENDPOINT_ID},PUBSUB_TOPIC_ID=${_PUBSUB_TOPIC}'
+
+  # 3.5. Fetch Frontend Environment Variables
+  - name: 'gcr.io/cloud-builders/gcloud'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        gcloud secrets versions access latest --secret=frontend-env-production > frontend/.env.production
+      
+  # 4. Build Frontend Image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/frontend:$COMMIT_SHA', '-f', 'infra/Dockerfile.frontend', '.']
+
+  # 5. Push Frontend Image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/frontend:$COMMIT_SHA']
+
+  # 6. Deploy Frontend to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'servadium-frontend'
+      - '--image'
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/frontend:$COMMIT_SHA'
+      - '--region'
+      - '${_REGION}'
+      - '--allow-unauthenticated'
+      - '--set-env-vars=NEXT_PUBLIC_WS_URL=wss://servadium-backend-${_SERVICE_HASH}-uc.a.run.app,NEXT_PUBLIC_API_URL=https://servadium-backend-${_SERVICE_HASH}-uc.a.run.app'
+
+substitutions:
+  _REGION: 'us-central1'
+  _REPO_NAME: 'servadium-repo'
+  _BUCKET_NAME: 'servadium-knowledge'
+  _INDEX_ID: 'YOUR_INDEX_ID'
+  _ENDPOINT_ID: 'YOUR_ENDPOINT_ID'
+  _PUBSUB_TOPIC: 'pipeline-events'
+  _SERVICE_HASH: 'hash' # Needs to be known or fetched dynamically for the frontend deployment
+
+options:
+  machineType: 'E2_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY
